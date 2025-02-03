@@ -1,0 +1,158 @@
+_schema-version: 3.3.0
+ID: directreq
+description: A simple CAP project.
+version: 1.0.0
+modules:
+- name: directreq-srv
+  type: nodejs
+  path: gen/srv
+  requires:
+  - name: directreq-db
+  - name: uaa_directreq
+  - name: documentManagementInstance
+  - name: directreq-destination
+  - name: directreq-connectivity
+  provides:
+  - name: srv-api
+    properties:
+      srv-url: ${default-url}
+  parameters:
+    buildpack: nodejs_buildpack
+    readiness-health-check-http-endpoint: /health
+    readiness-health-check-type: http
+  build-parameters:
+    builder: npm
+- name: directreq-db-deployer
+  type: hdb
+  path: gen/db
+  requires:
+  - name: directreq-db
+  parameters:
+    buildpack: nodejs_buildpack
+- name: directreq-destination-content
+  type: com.sap.application.content
+  requires:
+  - name: directreq-destination-service
+    parameters:
+      content-target: true
+  - name: directreq_html_repo_host
+    parameters:
+      service-key:
+        name: directreq_html_repo_host-key
+  - name: uaa_directreq
+    parameters:
+      service-key:
+        name: uaa_directreq-key
+  parameters:
+    content:
+      instance:
+        destinations:
+        - Name: directapprouter_directreq_html_repo_host
+          ServiceInstanceName: directreq-html5-app-host-service
+          ServiceKeyName: directreq_html_repo_host-key
+          sap.cloud.service: directapprouter
+        - Authentication: OAuth2UserTokenExchange
+          Name: directapprouter_uaa_directreq
+          ServiceInstanceName: directreq-xsuaa-service
+          ServiceKeyName: uaa_directreq-key
+          sap.cloud.service: directapprouter
+        existing_destinations_policy: ignore
+  build-parameters:
+    no-source: true
+- name: directreq-app-content
+  type: com.sap.application.content
+  path: .
+  requires:
+  - name: directreq_html_repo_host
+    parameters:
+      content-target: true
+  build-parameters:
+    build-result: resources
+    requires:
+    - artifacts:
+      - sravandirectreqapplication.zip
+      name: sravandirectreqapplication
+      target-path: resources/
+- name: sravandirectreqapplication
+  type: html5
+  path: app/directreqapplication
+  build-parameters:
+    build-result: dist
+    builder: custom
+    commands:
+    - npm install
+    - npm run build:cf
+    supported-platforms: []
+resources:
+- name: directreq-destination
+  type: org.cloudfoundry.managed-service
+  parameters:
+    service: destination
+    service-plan: lite
+- name: documentManagementInstance
+  type: org.cloudfoundry.managed-service
+  parameters:
+    service: sdm
+    service-plan: standard
+- name: directreq-db
+  type: com.sap.xs.hdi-container
+  parameters:
+    service: hana
+    service-plan: hdi-shared
+- name: directreq-destination-service
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      HTML5Runtime_enabled: true
+      init_data:
+        instance:
+          destinations:
+          - Authentication: NoAuthentication
+            Name: ui5
+            ProxyType: Internet
+            Type: HTTP
+            URL: https://ui5.sap.com
+          - Authentication: NoAuthentication
+            HTML5.DynamicDestination: true
+            HTML5.ForwardAuthToken: true
+            Name: directreq-srv-api
+            ProxyType: Internet
+            Type: HTTP
+            URL: ~{srv-api/srv-url}
+          existing_destinations_policy: update
+      version: 1.0.0
+    service: destination
+    service-name: directreq-destination-service
+    service-plan: lite
+  requires:
+  - name: srv-api
+- name: directreq_html_repo_host
+  type: org.cloudfoundry.managed-service
+  parameters:
+    service: html5-apps-repo
+    service-name: directreq-html5-app-host-service
+    service-plan: app-host
+- name: directreq-connectivity
+  type: org.cloudfoundry.managed-service
+  parameters:
+      service: connectivity
+      service-plan: lite
+- name: uaa_directreq
+  type: org.cloudfoundry.managed-service
+  parameters:
+    config:
+      tenant-mode: dedicated
+      xsappname: directreq-${org}-${space}
+    path: ./xs-security.json
+    service: xsuaa
+    service-name: directreq-xsuaa-service
+    service-plan: application
+parameters:
+  deploy_mode: html5-repo
+  enable-parallel-deployments: true
+build-parameters:
+  before-all:
+  - builder: custom
+    commands:
+    - npm ci
+    - npx cds build --production
