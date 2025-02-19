@@ -1,8 +1,9 @@
 const cds = require('@sap/cds');
 
 module.exports = cds.service.impl(async function () {
-  const { Request_Header, Request_Item, media } = this.entities;
+  const { Request_Header, Request_Item } = this.entities;
   const { uuid } = cds.utils
+
 
   // Request_No auto-numbering for Request_Header 
   this.before('CREATE', 'Request_Header', async (req) => {
@@ -88,6 +89,8 @@ module.exports = cds.service.impl(async function () {
   });
 
 
+
+
   // status code logic after creating (open to saved)
   this.after('CREATE', 'Request_Header', async (req) => {
 
@@ -109,29 +112,65 @@ module.exports = cds.service.impl(async function () {
   });
 
 
-
   // total price logic for request header 
-  this.after(['CREATE', 'UPDATE' ], 'Request_Header', async (req) => {
+  this.after('UPDATE', 'Request_Item.drafts', async (data, req) => {
 
-    console.log("hi")
-    console.log(req._Items);
+    let totamount = 0;
+    let result = await SELECT.from(Request_Item.drafts).columns('_Header_ID').where({ ID: data.ID });
 
-    let data = req._Items
+    let dbItemInfos = await SELECT.from(Request_Item.drafts).where({ _Header_ID: result[0]._Header_ID });
 
-    let totalPrice = 0;
-
-    data.forEach((item) => {
-      if (item.Quantity && item.UnitPrice) {
-        totalPrice += item.Quantity * item.UnitPrice;
+    for (let i = 0; i < dbItemInfos.length; i++) {
+      if (Number(dbItemInfos[i].Price) > 0) {
+        totamount = totamount + Number(dbItemInfos[i].Price);
       }
-    });
+    }
 
-    console.log("Total Price: " + totalPrice); // Output the total price
+    await UPDATE(Request_Header.drafts, result[0]._Header_ID).with({ TotalPrice: totamount });
 
-    await UPDATE(Request_Header)
-      .set({ TotalPrice: totalPrice })  // Update the Req_Item_No field
-      .where({ ID: req.ID });  // Use the item's ID to identify it for updating
 
+  })
+
+  // total price logic for request items 
+
+  this.before('UPDATE', Request_Item.drafts, async (req) => {
+    let lv_unitPrice, lv_quantity;
+
+    if ('Quantity' in req.data) {
+      lv_quantity = req.data.Quantity;
+      let result = await SELECT.from(Request_Item.drafts)
+        .columns('UnitPrice')
+        .where({ ID: req.data.ID });
+      lv_unitPrice = result[0]?.UnitPrice || 0;
+    }
+
+    if (lv_quantity && lv_unitPrice) {
+
+
+      var totalPrice = lv_quantity * lv_unitPrice;
+
+      await UPDATE(Request_Item.drafts, req.data.ID).with({ Price: totalPrice });
+    }
+
+  })
+
+
+  // when material is selected autofill currency and unitprice 
+
+  this.before('UPDATE', Request_Item.drafts, async (req) => {
+
+    if ('Material' in req.data) {
+      let material = req.data.Material;
+      let ID = req.data.ID;
+      const externalService = await cds.connect.to('OP_API_PRODUCT_SRV_0001');
+      let valuationdetails = await externalService.send('GET', `/A_Product('${material}')/to_Valuation`);
+      let Price = Number(valuationdetails[0]?.StandardPrice) || 0;
+      let Currency = valuationdetails[0]?.Currency;
+      console.log(Number(valuationdetails[0]?.StandardPrice), valuationdetails[0]?.BaseUnit);
+
+
+      await UPDATE(Request_Item.drafts, ID).with({ UnitPrice: Price, Currency_code: Currency });
+    }
 
   })
 
@@ -142,7 +181,7 @@ module.exports = cds.service.impl(async function () {
     console.log(req.params[0].ID)
 
     await UPDATE(Request_Header)
-      .with({ Status_Code: 'P' , insertrestrictions: 0 })  // Update the Req_Item_No field
+      .with({ Status_Code: 'P', insertrestrictions: 0 })  // Update the Req_Item_No field
       .where({ ID: req.params[0].ID });  // Use the item's ID to identify it for updating
 
     const updateitems = await SELECT.from(Request_Header).where({ ID: req.params[0].ID });
@@ -189,7 +228,7 @@ module.exports = cds.service.impl(async function () {
   this.on('responsefrombparejected', async (req) => {
 
     await UPDATE(Request_Header)
-      .with({ Status_Code: 'X' , insertrestrictions: 1})
+      .with({ Status_Code: 'X', insertrestrictions: 1 })
       .where({ Request_No: req.data.ID });
 
 
@@ -197,8 +236,11 @@ module.exports = cds.service.impl(async function () {
 
 
   // getting materialset and plantset data
-  const { MaterialSet, PlantSet } = this.entities;
+  const { MaterialSet, PlantSet, plantapi } = this.entities;
   const product_api1 = await cds.connect.to('OP_API_PRODUCT_SRV_0001');
+  const plant_api = await cds.connect.to('API_PLANT_SRV')
+
+
   this.on("READ", MaterialSet, async (req) => {
 
     req.query.where("Product <> ''");
@@ -212,14 +254,24 @@ module.exports = cds.service.impl(async function () {
     return await product_api1.run(req.query);
   });
 
+  this.on("READ", plantapi, async (req) => {
+    req.query.where("Plant <> ''");
+    req.query.SELECT.count = false;
+    return await plant_api.run(req.query);
+
+
+  })
+
+
+
 
 
   // event handler for responsefrombpa
 
   this.on('responsefrombpa', async (req) => {
 
-    const payload_bpa_header = await SELECT.from(Request_Header).where({ ID: req.data.ID });
-    const payload_bpa_items = await SELECT.from(Request_Item).where({ _Header_ID: req.data.ID });
+    const payload_bpa_header = await SELECT.from(Request_Header).where({ Request_No: req.data.ID });
+    const payload_bpa_items = await SELECT.from(Request_Item).where({ _Header_ID: payload_bpa_header[0].ID });
 
     // integration trigger code 
     const integrationtrigger = await cds.connect.to('integration_destination');
@@ -260,18 +312,90 @@ module.exports = cds.service.impl(async function () {
 
       await UPDATE(Request_Header)
         .set({ PR_Number: prnumber })  // Update the prnumber field from the s4 
-        .where({ ID: req.data.ID });  // Use the item's ID to identify it for updating
+        .where({ Request_No: req.data.ID });  // Use the item's ID to identify it for updating
 
       // update the statuscode to ordered
 
       await UPDATE(Request_Header)
-        .set({ Status_Code: 'A' })
+        .with({ Status_Code: 'A', insertrestrictions: 0 })
         .where({ Request_No: req.data.ID });
 
       const updateitemsint = await SELECT.from(Request_Header).where({ Request_No: req.data.ID });
       console.log(updateitemsint);
 
     }
+
+
+  })
+
+
+  // copy header functionality 
+
+  this.on('copyheader', async (req) => {
+
+    // getting the id from the request 
+    console.log(req.params[0].ID);
+
+    // generating the uuid for the new record 
+    let ID = uuid()
+
+    // getting the whole data with the help of id 
+    const copieddata = await SELECT.from(Request_Header)
+      .columns(
+        `PR_Number`,
+        `PRType`,
+        `Request_Description`,
+        `Status_Code`,
+        `insertrestrictions`,
+      )
+      .where({ ID: req.params[0].ID });
+
+    // adding the generated id to the copied data so that we can join items and header
+    copieddata[0].ID = ID;
+
+
+
+    // select statement for items data 
+    const copieddata_Items = await SELECT.from(Request_Item)
+      .columns(
+        `PR_Item_Number`,
+        `Material`,
+        `Material_Description`,
+        `PurOrg`,
+        `Plant`,
+        `Status`,
+        `Quantity`,
+        `UoM`,
+        `UnitPrice`,
+        `Price`,
+        `Currency`,
+        `Req_Item_No`,
+        `PurchasingGroup`,
+      ).where({ _Header_ID: req.params[0].ID });
+
+    if (Object.keys(copieddata_Items).length != 0) {
+      // adding the generated id to the copieddata_Items so that we can join items and header
+      copieddata_Items[0]._Header_ID = ID;
+      // added header data composition entries 
+      copieddata[0]._Items = copieddata_Items;
+    }
+
+
+    // create the same data with new req_no 
+    try {
+      await this.create(Request_Header).entries(copieddata);
+
+
+    } catch (error) {
+      req.error("An error occurred:", error.message);
+
+    }
+
+    return {
+      ID
+    }
+
+
 
 
   })

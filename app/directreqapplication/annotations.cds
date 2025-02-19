@@ -16,20 +16,19 @@ annotate service.Request_Header with @(
 
         {
             $Type: 'UI.DataField',
-            Value: Request_No,
-            Label: 'Request Number'
+            Value: Request_No
         },
 
         {
             $Type: 'UI.DataField',
             Value: Request_Description,
-            Label: 'Request Description'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: TotalPrice,
-            Label: 'Total Price'
+            
         },
 
         {
@@ -53,8 +52,7 @@ annotate service.Request_Header with @(
 
         {
             $Type: 'UI.DataField',
-            Value: PR_Number,
-            Label: 'Purchase Requisition NO'
+            Value: PR_Number
         }
 
     ],
@@ -86,7 +84,7 @@ annotate service.Request_Header with @(
         },
         {
             $Type : 'UI.ReferenceFacet',
-            Label : 'PO Items',
+            Label : 'Request Items',
             Target: '_Items/@UI.LineItem',
         },
     ],
@@ -97,17 +95,22 @@ annotate service.Request_Header with @(
         {
             $Type: 'UI.DataField',
             Value: Request_No,
-            Label: 'Request No',
+            
         },
         {
             $Type: 'UI.DataField',
             Value: Request_Description,
-            Label: 'Request Description'
+            
         },
         {
             $Type: 'UI.DataField',
             Value: TotalPrice,
-            Label: 'Total Price'
+            
+        },
+        {
+            $Type: 'UI.DataField',
+            Value: PR_Number,
+
         },
         {
             $Type      : 'UI.DataField',
@@ -160,44 +163,44 @@ annotate service.Request_Item with @(
         {
             $Type: 'UI.DataField',
             Value: Req_Item_No,
-            Label: 'Request Item Number'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: Material_Description,
-            Label: 'Material Description'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: Price,
-            Label: 'price'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: Material,
-            Label: 'Material'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: Plant,
-            Label: 'Plant'
+           
         },
 
 
         {
             $Type: 'UI.DataField',
             Value: Quantity,
-            Label: 'Quantity'
+            
         },
 
         {
             $Type: 'UI.DataField',
             Value: UoM,
-            Label: 'Unit of Mass'
+            
         },
 
 
@@ -208,7 +211,7 @@ annotate service.Request_Item with @(
     UI.HeaderInfo           : {
         TypeName      : 'Request Items',
         TypeNamePlural: 'Request Items',
-        Title         : {Value: PR_Item_Number},
+        Title         : {Value: Req_Item_No},
         Description   : {Value: Material_Description}
     },
 
@@ -220,7 +223,7 @@ annotate service.Request_Item with @(
         Facets: [
             {
                 $Type : 'UI.ReferenceFacet',
-                Label : 'Plant Details',
+                Label : 'Plant and Material Details',
                 Target: '@UI.Identification'
             },
             {
@@ -237,28 +240,28 @@ annotate service.Request_Item with @(
         {
             $Type: 'UI.DataField',
             Value: Plant,
-            Label: 'Plant'
+            
         },
         {
             $Type: 'UI.DataField',
             Value: PurOrg,
-            Label: 'PurOrg'
+           
         },
         {
             $Type: 'UI.DataField',
             Value: Material,
-            Label: 'Material'
+           
         },
         {
             $Type: 'UI.DataField',
             Value: Material_Description,
-            Label: 'Material Description'
+           
         },
 
         {
             $Type: 'UI.DataField',
             Value: PurchasingGroup,
-            Label: 'PurchasingGroup'
+           
         }
     ],
 
@@ -268,17 +271,17 @@ annotate service.Request_Item with @(
         {
             $Type: 'UI.DataField',
             Value: Quantity,
-            Label: 'Quantity'
+            
         },
         {
             $Type: 'UI.DataField',
             Value: UnitPrice,
-            Label: 'Unit Price'
+            
         },
         {
             $Type: 'UI.DataField',
             Value: UoM,
-            Label: 'Unit of Mass'
+            
         },
         {
             $Type: 'UI.DataField',
@@ -288,11 +291,13 @@ annotate service.Request_Item with @(
         {
             $Type: 'UI.DataField',
             Value: Price,
-            Label: 'Price'
+            
         }
     ], }
 
 );
+
+// side effects
 
 // refreshing the page when deleted
 annotate service.Request_Header @(Common.SideEffects #ReactonItemDeletion: {
@@ -308,8 +313,40 @@ annotate service.Request_Header @(Common.SideEffects #ReactOnCommentCreation: {
     TargetProperties: [] // Refresh all relevant fields, no specific property defined
 });
 
+// side effect for material 
+
+annotate service.Request_Item @(Common : {
+    SideEffects #Materialchanged  : {
+        SourceProperties : ['Material'],
+        TargetProperties : ['UnitPrice', 'Currency_code', 'Price']
+    }
+});
+
+// side effect for requestitem price 
+
+annotate service.Request_Item @(Common : {
+    SideEffects #QuantityChanged : {
+        SourceProperties : ['Quantity'],
+        TargetProperties : ['Price']
+    }
+});
+
+// side effect for total price request header
+annotate service.Request_Header @(Common : {
+    SideEffects #QuantityChanged : {
+        SourceProperties : ['_Items/Quantity' , '_Items/UnitPrice'],
+        TargetProperties : ['TotalPrice']
+    }
+});
+
+
+
 annotate service.Request_Header.sendforapproval with @(Common.SideEffects: {
     TargetProperties : ['in/insertrestrictions']
+});
+
+annotate service.responsefrombpa with @(Common.SideEffects: {
+    TargetEntities : ['/service/Request_Header']
 });
 
 
@@ -321,6 +358,11 @@ annotate service.Request_Header with {
     Request_No  @(readonly, );
     TotalPrice  @(readonly, );
 };
+
+annotate service.Request_Item with {
+    Req_Item_No ;
+};
+
 
 
 annotate service.Request_Item {
@@ -337,37 +379,34 @@ annotate service.Request_Item {
                 LocalDataProperty: Material_Description,
                 ValueListProperty: 'Desc'
             },
+            {
+                $Type            : 'Common.ValueListParameterOut',
+                LocalDataProperty: UoM,
+                ValueListProperty: 'UnitofMass'
+            }
+
         ]
     }
 }
 
 annotate service.Request_Item {
     Plant @Common.ValueList: {
-        CollectionPath: 'PlantSet',
+        CollectionPath: 'plantapi',
         Parameters    : [{
             $Type            : 'Common.ValueListParameterInOut',
             LocalDataProperty: Plant,
-            ValueListProperty: 'plant'
+            ValueListProperty: 'plant_id'
         }, ]
     }
 }
 
-// annotate service.Request_Header with actions {
-//     sendforapproval @Core.OperationAvailable: {$edmJson: {$Eq: [
-//         {$Path: 'in/Status_Code'},
-//         'Inapproval'
-//     ]}};
-// };
-
-
-// annotate service.Request_Header.sendforapproval @(
-//     Core.OperationAvailable : true
-// );
 
 annotate service.Request_Header with @UI : {
   DeleteHidden : {$edmJson: {$Ne: [{$Path: 'insertrestrictions'}, 1]}},
   UpdateHidden:  {$edmJson: {$Ne: [{$Path: 'insertrestrictions'}, 1]}}
 };
+
+
 
 
 
